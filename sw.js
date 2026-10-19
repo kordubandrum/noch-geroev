@@ -1,10 +1,12 @@
 // Работа без сети: оболочка игры хранится в телефоне, картинки и шрифты
 // запоминаются после первой загрузки. При выпуске новой версии поднять VERSION.
 
-const VERSION = 'igra-v2';
+const VERSION = 'igra-v3';
 const SHELL = [
-  './', 'index.html', 'manifest.webmanifest', 'css/style.css?v=2',
-  'js/main.js?v=2', 'js/rules.js', 'js/gen.js', 'js/ai.js', 'js/ui.js', 'js/combat.js', 'js/combat-view.js',
+  './', 'index.html', 'manifest.webmanifest', 'css/style.css?v=3',
+  'js/main.js?v=3', 'js/rules.js', 'js/gen.js', 'js/ai.js', 'js/ui.js', 'js/combat.js', 'js/combat-view.js', 'js/theater.js', 'js/cast.js', 'js/director.js',
+  'vendor/three/build/three.module.min.js', 'vendor/three/addons/loaders/GLTFLoader.js', 'vendor/three/addons/utils/SkeletonUtils.js',
+  'vendor/three/addons/utils/BufferGeometryUtils.js', 'vendor/three/addons/libs/meshopt_decoder.module.js', 'models/anims.glb',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 

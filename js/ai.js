@@ -236,15 +236,21 @@ ${STYLE_RU} 2-4 предложения. Обращайся к героям по 
  "check":null или {"hero_id":"id героя","stat":"dex","dc":15,"why":"что проверяем, коротко","success":"что будет при успехе","fail":"что будет при провале","fight_on_fail":false},
  "combat":null или {"enemies":[{"name":"","hp":0,"ac":0,"atk":0,"dmg":"1d6+1","weapon":"","desc":"","en":"short english description for artist"}]},
  "scene":null или {"name":"название нового места","desc":"1 фраза","en":"english description of the place for artist"},
+ "stage":{"actors":[{"id":"короткий id","name":"Имя","creature":"вид из списка","enemy":true}],"props":[{"id":"chandelier","type":"тип предмета"}],"beats":[{"who":"id героя или актёра","do":"действие","to":"id предмета или места","target":"id","say":"реплика","fx":"fire"}]},
  "next_hero_id":"id героя, к которому обращаешься дальше",
  "options":["короткий вариант действия","вариант","вариант"],
  "xp":0}
+stage это постановка для 3D-сцены: кто появился и что делают НЕ игроки (действие героя уже показано отдельно). 1-4 шага. Новых персонажей добавляй в actors, тех, кто уже на сцене, не повторяй.
+Виды (creature): goblin, orc, wolf, spider, zombie, skeleton, giant, troll, ogre, minotaur, yeti, dragon, demon, imp, ghost, slime, golem, bat, rat, snake, bandit, cultist, guard, soldier, sorcerer, priest, innkeeper, noble, commoner, child, horse, cat, cow, chicken.
+Предметы (type): table, chair, barrel, crate, chest, balcony, chandelier, pillar, rock, tree, bush, torch, campfire, well, cart, statue, altar, coffin, throne, door, bridge, cage, ladder, tent.
+Действия (do): walk, run, sneak, jump, attack, shoot, cast, throw, block, dodge, hit, die, fall, getup, cheer, taunt, talk, use, pickup, sit, appear, vanish. fx для cast: fire, ice, lightning, heal, light, shadow. Места (to): left, center, right, back, front.
 scene заполняй, только когда герои пришли в новое место. xp: опыт за решённую задачу без боя (0, 50 или 100).`;
 
 export async function gmTurn(state, userMessage, onWait) {
   const sys = GM_RULES.replace('ТЕМА', state.theme || 'классическое фэнтези') +
     `\n\nЗадание: ${state.quest.giver} ${state.quest.goal}. Награда ${state.quest.reward} золотых.` +
     `\nТекущее место: ${state.place.name}. ${state.place.desc}` +
+    `\nНа сцене сейчас: ${(state.stage?.actors || []).filter((x) => !x.dead).map((x) => `${x.id} (${x.name})`).join(', ') || 'никого'}; предметы: ${(state.stage?.props || []).map((p) => p.id).join(', ') || 'нет'}.` +
     `\nГерои:\n${partySheet(state.party)}`;
   const history = state.log.filter((e) => e.who === 'gm' || e.who === 'player').slice(-12).map((e) => ({
     role: e.who === 'gm' ? 'assistant' : 'user',

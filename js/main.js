@@ -14,6 +14,9 @@ import {
   h, toast, art, heroArt, placeImg, diceOverlay, sheet, speak, stopSpeak, canListen, listen,
 } from './ui.js';
 import { runCombat } from './combat-view.js';
+import { Theater, setForKind } from './theater.js';
+import { emptyStage, parseAction, outcomeBeats, acceptAiStage, spawn } from './director.js';
+import { creatureFromText } from './cast.js';
 
 const app = document.getElementById('app');
 const mount = (...nodes) => app.append(...nodes.filter((x) => x !== null && x !== undefined && x !== false));
@@ -49,6 +52,7 @@ function newState(mode) {
 const screens = {};
 function go(name, ...args) {
   stopSpeak();
+  closeStage();
   app.innerHTML = '';
   window.scrollTo(0, 0);
   screens[name](...args);
@@ -334,7 +338,7 @@ function addLog(who, text, extra = {}) {
 let logEl = null, dockEl = null, bannerEl = null, stripEl = null;
 
 screens.story = () => {
-  bannerEl = h('div', { class: 'scene-banner' });
+  bannerEl = h('div', { class: 'story-stage' });
   stripEl = h('div', { class: 'party-strip' });
   logEl = h('div', { class: 'log' });
   dockEl = h('div', { class: 'dock' });
@@ -347,12 +351,78 @@ let bannerKey = '';
 function drawBanner() {
   if (!bannerEl) return;
   const key = JSON.stringify([S.place?.name, S.place?.seed]);
-  if (key === bannerKey) return;
+  if (key === bannerKey && stage) return;
   bannerKey = key;
-  bannerEl.innerHTML = '';
-  bannerEl.append(placeImg(S.place, 'scene-art'), h('div', { class: 'cap' }, S.place?.name || ''),
-    h('div', { class: 'tools' },
+  if (!stage) {
+    bannerEl.innerHTML = '';
+    const el = h('div', { class: 'stage' });
+    bannerEl.append(el, h('div', { class: 'cap' }), h('div', { class: 'tools' },
       h('button', { class: 'icon-btn', 'aria-label': 'Меню', onclick: storyMenu }, '☰')));
+    stage = new Theater(el, { onTapActor: (id) => { const hr = S.party.find((x) => x.id === id); if (hr) heroSheet(hr); } });
+    stage.speed = settings.get('speed', 1);
+  }
+  bannerEl.querySelector('.cap').textContent = S.place?.name || '';
+  syncStage();
+}
+
+// ---------- 3D-сцена истории ----------
+
+let stage = null;
+let stageQueue = Promise.resolve();
+const HERO_SLOTS = [[-3, 0, 0.8], [-2, 0, 2.4], [-4, 0, -1], [-1.4, 0, -0.6], [-4.4, 0, 2], [-2.8, 0, -2.4]];
+
+function closeStage() {
+  if (stage) { stage.dispose(); stage = null; }
+  stageQueue = Promise.resolve();
+}
+
+function ensureStage() {
+  if (!S.stage) S.stage = emptyStage(S.place);
+  return S.stage;
+}
+
+// Новое место: сцена строится заново
+function newStage() {
+  S.stage = emptyStage(S.place);
+  save();
+}
+
+// Привести 3D-сцену к тому, что записано в игре: место, предметы, герои, существа
+async function syncStage() {
+  if (!stage) return;
+  const st = ensureStage();
+  if (stage.setKey !== st.set) {
+    for (const id of [...stage.actors.keys()]) stage.removeActor(id);
+    stage.setStage(st.set, { seed: S.place?.seed || 1 });
+  }
+  for (const p of st.props) stage.addProp(p.id, p.type, p.slot);
+  for (const id of [...stage.actors.keys()]) {
+    if (!S.party.some((x) => x.id === id) && !st.actors.some((a) => a.id === id && !a.gone)) stage.removeActor(id);
+  }
+  await Promise.all([
+    ...S.party.map((hr, i) => stage.actors.has(hr.id) ? null
+      : stage.addActor({ id: hr.id, kind: 'hero', race: hr.race, cls: hr.cls, name: hr.name.split(' ')[0], side: 'A' }, HERO_SLOTS[i % HERO_SLOTS.length])),
+    ...st.actors.filter((a) => !a.gone).map((a) => stage.actors.has(a.id) ? null
+      : stage.addActor({ id: a.id, kind: 'monster', creature: a.creature, name: a.name, side: a.side === 'B' ? 'B' : 'N' }, a.slot)),
+  ]);
+}
+
+// Разыграть шаги по очереди: новые встают в конец, ничего не перебивает друг друга
+function perform(beats) {
+  if (!beats?.length) return stageQueue;
+  stageQueue = stageQueue.then(async () => {
+    if (!stage) return;
+    await syncStage();
+    await stage.run(beats);
+  }).catch((e) => console.error('stage', e));
+  return stageQueue;
+}
+
+// Действие игрока или ведущего сразу на сцену
+function act(text, who) {
+  const { beats } = parseAction(text, { who, stage: ensureStage(), heroes: S.party });
+  save();
+  perform(beats);
 }
 
 function drawStrip() {
@@ -499,6 +569,7 @@ async function askGm(text, { hero, intro = false } = {}) {
   if (thinking) return;
   thinking = true;
   if (text) addLog('player', text, { name: hero?.name.split(' ')[0] || '' });
+  if (text && hero) act(text, hero.id);
   redrawLog();
   drawDock();
   const label = thinkingEl.querySelector('span');
@@ -507,6 +578,7 @@ async function askGm(text, { hero, intro = false } = {}) {
   const msg = intro ? null : `${notes} ${hero.name} (id ${hero.id}): ${text}`.trim();
   try {
     const r = intro ? await gmIntro(S, onWait) : await gmTurn(S, msg, onWait);
+    if (intro) r.intro = true;
     S.notes = [];
     applyGm(r);
   } catch (e) {
@@ -521,7 +593,22 @@ function applyGm(r) {
   if (r.narration) { addLog('gm', r.narration); speak(r.narration); }
   if (r.scene?.name) {
     S.place = { name: r.scene.name, desc: r.scene.desc || '', en: r.scene.en || 'fantasy landscape', kind: placeKind(`${r.scene.name} ${r.scene.desc}`), seed: rnd(1e6), custom: true };
+    newStage();
+  } else if (r.intro && r.narration) {
+    // во вступлении ведущий сам выбирает место: «в таверне…»
+    const kind = placeKind(r.narration);
+    const set = setForKind(kind, r.narration);
+    if ((kind || /таверн|трактир/i.test(r.narration)) && set !== ensureStage().set) {
+      ensureStage().set = set;
+      if (kind) S.place.kind = kind;
+      const named = r.narration.match(/(таверн\S*|трактир\S*|деревн\S*|город\S*|замк\S*|храм\S*|пещер\S*)\s+«([^»]{2,40})»/i);
+      if (named) S.place.name = `${named[1].replace(/^./, (c) => c.toUpperCase()).replace(/е$|у$|и$/, 'а')} «${named[2]}»`;
+    }
   }
+  // постановка от ИИ; если её нет, разбираем рассказ ведущего сами
+  const aiBeats = acceptAiStage(r.stage, ensureStage(), S.party);
+  if (aiBeats.length) perform(aiBeats);
+  else if (r.narration) act(r.narration, null);
   if (r.xp > 0) giveXp(Math.min(200, r.xp));
   S.options = Array.isArray(r.options) ? r.options.filter((x) => typeof x === 'string').slice(0, 3) : [];
   if (r.next_hero_id && S.party.some((x) => x.id === r.next_hero_id)) S.activeHeroId = r.next_hero_id;
@@ -544,7 +631,7 @@ function applyGm(r) {
     const total = {}, seen = {};
     enemies.forEach((e) => (total[e.name] = (total[e.name] || 0) + 1));
     enemies.forEach((e) => { if (total[e.name] > 1) { seen[e.name] = (seen[e.name] || 0) + 1; e.name = `${e.name} ${seen[e.name]}`; } });
-    S.pending = { type: 'combat', enemies };
+    S.pending = { type: 'combat', enemies: enemiesOnStage(enemies) };
   }
 }
 
@@ -554,7 +641,32 @@ function rotateHero() {
 }
 
 function localEncounter() {
-  return buildEncounter(S.party, S.place?.kind || placeKind(S.place?.name)).map((m) => ({ ...m, seed: rnd(1e6) }));
+  return enemiesOnStage(buildEncounter(S.party, S.place?.kind || placeKind(S.place?.name)).map((m) => ({ ...m, seed: rnd(1e6) })));
+}
+
+// Враги появляются на сцене и рычат. Каждому врагу запоминается, кем он играется.
+function enemiesOnStage(enemies) {
+  const st = ensureStage();
+  const beats = [];
+  for (const e of enemies) {
+    const wantKind = e.key ? null : creatureFromText(`${e.name} ${e.desc || ''}`);
+    let a = st.actors.find((x) => x.name === e.name && !x.gone)
+      // тот же вид, уже вышедший на сцену из рассказа ведущего: «орк» и «Орк-громила» один персонаж
+      || st.actors.find((x) => !x.gone && x.side === 'B' && !enemies.some((o) => o.stageId === x.id) && (x.creature === wantKind || x.creature === e.key));
+    if (a) a.name = e.name;
+    if (!a) {
+      const kind = e.key ? null : creatureFromText(`${e.name} ${e.desc || ''}`);
+      a = spawn(st, kind || ({ goblin: 'goblin', wolf: 'wolf', skeleton: 'skeleton', zombie: 'zombie', bandit: 'bandit', cultist: 'cultist', kobold: 'kobold', orc: 'orc', gnoll: 'gnoll', spider: 'spider', bugbear: 'bugbear', ghoul: 'ghoul', wight: 'wight', ogre: 'ogre', minotaur: 'minotaur' })[e.key] || 'goblin', e.name);
+      beats.push({ who: a.id, do: 'appear' });
+    }
+    a.side = 'B';
+    e.creature = a.creature;
+    e.stageId = a.id;
+  }
+  beats.push(...enemies.slice(0, 2).map((e) => ({ who: e.stageId, do: 'taunt' })));
+  save();
+  perform(beats);
+  return enemies;
 }
 
 // Если нейросеть не ответила, ход играется по таблицам
@@ -566,6 +678,9 @@ function offlineTurn(text, hero, intro) {
     const t = offlineIntro(S);
     addLog('gm', t); speak(t);
     S.activeHeroId = S.party[0].id;
+    const giver = spawn(ensureStage(), creatureFromText(S.quest.giver) || 'commoner', S.quest.giver.split(' ').slice(-1)[0].replace(/^./, (c) => c.toUpperCase()));
+    giver.side = 'N';
+    perform([{ who: giver.id, do: 'appear' }, { who: giver.id, do: 'talk', say: `Помогите! ${S.quest.goal.replace(/^просит |^умоляет |^обещает |^хочет /, '')}` }]);
     return;
   }
   if (text && hero) {
@@ -593,6 +708,7 @@ async function doCheck(hero, stat, dc, why) {
   });
   S.pending = null;
   addLog('roll', `${hero.name.split(' ')[0]}, ${STAT_NAMES[stat].toLowerCase()}:`, { total: r.total, ok: r.ok });
+  perform(outcomeBeats(hero.id, r.ok, ensureStage()));
   const verdict = r.natural === 20 ? 'критический успех' : r.natural === 1 ? 'критический провал' : r.ok ? 'успех' : 'провал';
   if (S.mode === 'ai') {
     const out = (r.ok ? p.success : p.fail) || offlineOutcome(r.ok);
@@ -612,11 +728,12 @@ async function doCheck(hero, stat, dc, why) {
 // ---------- бой ----------
 
 function fight(enemies, place = S.place) {
+  closeStage();
   app.innerHTML = '';
   stopSpeak();
   logEl = dockEl = bannerEl = stripEl = null;
   runCombat(app, {
-    party: S.party, enemies, place, arena: false,
+    party: S.party, enemies, place, arena: false, stageSet: ensureStage().set,
     onEnd: ({ winner, xp }) => {
       S.pending = null;
       const won = winner === 'A';
@@ -631,6 +748,7 @@ function fight(enemies, place = S.place) {
       } else {
         addLog('sys', 'Отряд проиграл бой. Герои очнулись позже, едва живые.');
       }
+      if (won) for (const a of ensureStage().actors) if (enemies.some((e) => e.stageId === a.id)) a.gone = true;
       const status = S.party.map((x) => `${x.name} ${x.hp}/${x.maxHp}`).join(', ');
       note(`Бой окончен: ${won ? 'герои победили' : 'герои проиграли, враги их не убили, они очнулись позже'} (${names}). Здоровье: ${status}`);
       S.options = won ? ['Обыскать поверженных', 'Перевязать раны', 'Идти дальше'] : ['Осмотреться', 'Перевязать раны', 'Искать, куда делись враги'];
@@ -669,10 +787,21 @@ function drawGmDock() {
   );
   const ta = h('textarea', { rows: 1, placeholder: 'Что видят герои…' });
   const send = h('button', { class: 'send', 'aria-label': 'Записать' }, '➤');
+  // кто действует: ведущий рассказывает, или игрок описывает действие своего героя
+  const whoRow = h('div', { class: 'chips scroll' });
+  const drawWho = () => {
+    whoRow.innerHTML = '';
+    whoRow.append(h('button', { class: 'chip' + (gmWho === 'gm' ? ' on' : ''), onclick: () => { gmWho = 'gm'; ta.placeholder = 'Что видят герои…'; drawWho(); } }, 'Ведущий'));
+    for (const x of S.party) whoRow.append(h('button', { class: 'chip' + (gmWho === x.id ? ' on' : ''), onclick: () => { gmWho = x.id; ta.placeholder = `Что делает ${x.name.split(' ')[0]}?`; drawWho(); } }, x.name.split(' ')[0]));
+  };
+  drawWho();
   send.onclick = () => {
     const t = ta.value.trim();
     if (!t) return;
-    addLog('gm', t); speak(t); redrawLog(); ta.value = '';
+    const hr = S.party.find((x) => x.id === gmWho);
+    if (hr) { addLog('player', t, { name: hr.name.split(' ')[0] }); act(t, hr.id); }
+    else { addLog('gm', t); speak(t); act(t, null); }
+    redrawLog(); ta.value = '';
   };
   const row = h('div', { class: 'composer' }, ta);
   if (canListen) {
@@ -686,8 +815,10 @@ function drawGmDock() {
     row.append(mic);
   }
   row.append(send);
-  dockEl.append(tools, row);
+  dockEl.append(tools, whoRow, row);
 }
+
+let gmWho = 'gm';
 
 function checkSheet() {
   const st = { hero: S.party[0].id, stat: 'str', dc: 15 };
@@ -714,7 +845,7 @@ function battleSheet() {
     const draw = () => {
       box.innerHTML = '';
       box.append(h('h2', {}, 'Бой'),
-        h('button', { class: 'btn block', onclick: () => { close(); const en = buildEncounter(S.party, S.place?.kind || '').map((m) => ({ ...m, seed: rnd(1e6) })); addLog('gm', `Появляются враги: ${en.map((e) => e.name).join(', ')}.`); fight(en); } }, 'Подобрать врагов под отряд'),
+        h('button', { class: 'btn block', onclick: () => { close(); const en = localEncounter(); addLog('gm', `Появляются враги: ${en.map((e) => e.name).join(', ')}.`); stageQueue.then(() => fight(en)); } }, 'Подобрать врагов под отряд'),
         h('h3', {}, 'Или выбери сам'));
       for (const m of MONSTERS) {
         const n = counts[m.key] || 0;
@@ -729,7 +860,7 @@ function battleSheet() {
       box.append(h('button', { class: 'btn primary block', disabled: !total || null, onclick: () => {
         const en = [];
         for (const m of MONSTERS) for (let i = 0; i < (counts[m.key] || 0); i++) en.push({ ...m, name: (counts[m.key] > 1 ? `${m.name} ${i + 1}` : m.name), seed: rnd(1e6) });
-        close(); addLog('gm', `Появляются враги: ${en.map((e) => e.name).join(', ')}.`); fight(en);
+        close(); enemiesOnStage(en); addLog('gm', `Появляются враги: ${en.map((e) => e.name).join(', ')}.`); stageQueue.then(() => fight(en));
       } }, `В бой (${total})`));
     };
     draw();
@@ -742,7 +873,7 @@ function placeSheet() {
     const box = h('div', { class: 'stack' });
     const kinds = ['лес', 'пещера', 'руины', 'склеп', 'болото', 'горы', 'город', 'деревня', 'дорога', 'степь'];
     const apply = (p) => {
-      S.place = p; addLog('gm', `${p.name}. ${p.desc}`); speak(`${p.name}. ${p.desc}`);
+      S.place = p; newStage(); addLog('gm', `${p.name}. ${p.desc}`); speak(`${p.name}. ${p.desc}`);
       save(); close(); drawBanner(); redrawLog();
     };
     const ai = h('button', { class: 'btn block' }, 'Придумать с нейросетью');
@@ -782,7 +913,15 @@ function ideaSheet(kind) {
       box.innerHTML = '';
       if (url) box.append(h('div', { style: { width: '140px' } }, art({ ai: url, glyph: title[0] })));
       box.append(h('h2', {}, title), ...body.map((b) => h('p', {}, b)),
-        h('button', { class: 'btn primary block', onclick: () => { addLog('gm', logText); speak(logText); redrawLog(); close(); } }, 'Записать в журнал'),
+        h('button', { class: 'btn primary block', onclick: () => {
+          addLog('gm', logText); speak(logText); redrawLog(); close();
+          if (kind === 'npc') {
+            const n = spawn(ensureStage(), creatureFromText(body.join(' ')) || 'commoner', title);
+            n.side = 'N'; save();
+            const line = (body.find((x) => x.startsWith('«')) || '').replace(/[«»]/g, '');
+            perform([{ who: n.id, do: 'appear' }, { who: n.id, do: 'talk', say: line || 'Кто вы такие?' }]);
+          } else act(logText, null);
+        } }, 'Записать в журнал'),
         h('button', { class: 'btn ghost block', onclick: () => { close(); ideaSheet(kind); } }, 'Другой вариант'));
     };
     (async () => {
@@ -830,7 +969,7 @@ function arenaFight(sides, place) {
   S.started = true; save();
   app.innerHTML = '';
   runCombat(app, {
-    party: S.party, enemies: [], sides, place, arena: true,
+    party: S.party, enemies: [], sides, place, arena: true, stageSet: 'arena',
     onEnd: ({ winner, rematch }) => {
       for (const x of S.party) { x.hp = x.maxHp; x.slots = spellSlots(x.cls, x.level); }
       if (winner !== 'draw') {
