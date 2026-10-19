@@ -166,6 +166,15 @@ function pickVoice() {
 if ('speechSynthesis' in window) {
   pickVoice();
   speechSynthesis.onvoiceschanged = pickVoice;
+  // iPhone не даёт говорить, пока человек не коснулся экрана: первое касание
+  // проговаривает пустую фразу, и дальше голос работает без касаний
+  const unlock = () => {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+  };
+  document.addEventListener('touchend', unlock, { once: true });
+  document.addEventListener('click', unlock, { once: true });
 }
 
 export function speak(text) {

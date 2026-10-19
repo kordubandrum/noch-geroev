@@ -19,6 +19,12 @@ const app = document.getElementById('app');
 const mount = (...nodes) => app.append(...nodes.filter((x) => x !== null && x !== undefined && x !== false));
 const SAVE_KEY = 'igra.save.v1';
 
+// ---------- журнал ошибок ----------
+// Отладить iPhone с Windows нельзя, поэтому ошибки копятся в памяти телефона
+// и видны в настройках с кнопкой «Скопировать».
+
+const ERR_KEY = 'igra.errors'; // ошибки ловит скрипт в index.html
+
 // ---------- сохранение ----------
 
 let S = load();
@@ -872,6 +878,7 @@ screens.settings = () => {
     toggle('images', true, 'Уникальные картинки', 'Нейросеть дорисовывает портреты по описанию и новые места. Бесплатно одна картинка за 45 секунд. Без этого видны готовые картинки из игры.'),
     h('label', { class: 'field' }, 'Ключ Pollinations (для картинок без логотипа и быстрее)', token),
     h('p', { class: 'small muted' }, 'Без ключа всё работает бесплатно. Ключ хранится только на этом телефоне.'),
+    errorsBlock(),
     h('div', { class: 'spacer' }),
     h('button', { class: 'btn danger block', onclick: () => {
       sheet((close) => h('div', { class: 'stack' },
@@ -882,6 +889,22 @@ screens.settings = () => {
   );
   mount(h('div', { class: 'topbar' }, back(S?.started && S.mode !== 'arena' ? 'story' : 'home'), h('h2', {}, 'Настройки')), box);
 };
+
+function errorsBlock() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(ERR_KEY) || '[]'); } catch { /* пусто */ }
+  const info = `${navigator.userAgent} | экран ${screen.width}x${screen.height} | ${matchMedia('(display-mode: standalone)').matches ? 'как приложение' : 'в браузере'}`;
+  if (!list.length) return h('p', { class: 'small muted' }, 'Ошибок не было.');
+  const text = [info, ...list].join('\n');
+  return h('div', { class: 'callout stack' },
+    h('b', {}, `Ошибки в игре: ${list.length}`),
+    h('p', { class: 'small muted', style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, list.slice(-5).join('\n')),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn sm grow', onclick: async () => {
+        try { await navigator.clipboard.writeText(text); toast('Скопировано. Отправь Claude в чат.'); } catch { toast('Не удалось скопировать'); }
+      } }, 'Скопировать'),
+      h('button', { class: 'btn sm ghost grow', onclick: () => { localStorage.removeItem(ERR_KEY); go('settings'); } }, 'Очистить')));
+}
 
 // ---------- запуск ----------
 

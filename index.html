@@ -16,13 +16,27 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@400;500;700&family=Cormorant:ital,wght@0,500;0,600;0,700;1,500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1">
+  <link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body>
   <main id="app" aria-live="polite"></main>
   <div id="overlay" hidden></div>
   <div id="toast" role="status" hidden></div>
   <noscript>Для игры нужен включённый JavaScript.</noscript>
-  <script type="module" src="js/main.js?v=1"></script>
+  <script>
+    // Журнал ошибок для iPhone: виден в «Настройках», там же кнопка «Скопировать»
+    (function () {
+      function log(t) {
+        try {
+          var k = 'igra.errors', l = JSON.parse(localStorage.getItem(k) || '[]');
+          l.push(new Date().toLocaleString('ru-RU') + ' | ' + t);
+          localStorage.setItem(k, JSON.stringify(l.slice(-20)));
+        } catch (e) {}
+      }
+      addEventListener('error', function (e) { log(e.message + ' @ ' + String(e.filename || '').split('/').pop() + ':' + e.lineno); });
+      addEventListener('unhandledrejection', function (e) { log('promise: ' + ((e.reason && e.reason.message) || e.reason)); });
+    })();
+  </script>
+  <script type="module" src="js/main.js?v=2"></script>
 </body>
 </html>

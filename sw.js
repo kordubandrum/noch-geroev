@@ -1,10 +1,10 @@
 // Работа без сети: оболочка игры хранится в телефоне, картинки и шрифты
 // запоминаются после первой загрузки. При выпуске новой версии поднять VERSION.
 
-const VERSION = 'igra-v1';
+const VERSION = 'igra-v2';
 const SHELL = [
-  './', 'index.html', 'manifest.webmanifest', 'css/style.css?v=1',
-  'js/main.js?v=1', 'js/rules.js', 'js/gen.js', 'js/ai.js', 'js/ui.js', 'js/combat.js', 'js/combat-view.js',
+  './', 'index.html', 'manifest.webmanifest', 'css/style.css?v=2',
+  'js/main.js?v=2', 'js/rules.js', 'js/gen.js', 'js/ai.js', 'js/ui.js', 'js/combat.js', 'js/combat-view.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
@@ -14,7 +14,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== 'igra-media').map((k) => caches.delete(k))))
+    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== 'igra-media' && k !== 'igra-art').map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
